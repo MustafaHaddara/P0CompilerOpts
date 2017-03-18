@@ -595,7 +595,9 @@ def compileString(src, dstfn = None, target = 'mips'):
     global CG
     if target == 'mips': import CGmips as CG
     elif target == 'ast': import CGast as CG
+    elif target == 'opt': import CGopts as CG
     else: print('unknown target'); return
+    print('using target: ' + target)
     SC.init(src)
     ST.init()
     p = program()

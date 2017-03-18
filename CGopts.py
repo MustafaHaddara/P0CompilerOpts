@@ -29,7 +29,11 @@ from ST import Var, Ref, Const, Type, Proc, StdProc, Int, Bool
 # - `curlev` is the current level of nesting of P0 procedures
 # - `regs` is the set of available MIPS registers for expression evaluation
 # - `label` is a counter for generating new labels
-# - `asm` is a list of triples; each triple consists of three (possibly empty) strings:
+# - `declarations` is a list of declared variables (from the .data section)
+#   This list consists of:
+#   - name of the declared variable
+#   - size of the declared variable
+# - `instructions` is a list of triples; each triple consists of three (possibly empty) strings:
 #   - a label
 #   - an instruction, possibly with operands
 #   - a target (for branch and jump instructions)
@@ -37,8 +41,8 @@ from ST import Var, Ref, Const, Type, Proc, StdProc, Int, Bool
 # Procedure `genProgStart()` initializes these variables. Registers `$t0` to 
 # `$t9` are used as general-purpose registers.
 def genProgStart():
-    global asm, curlev, label, regs
-    asm, curlev, label = [], 0, 0
+    global declarations, instructions, usedDecl, curlev, label, regs
+    declarations, instructions, usedDecl, curlev, label = [], [], {}, 0, 0
     regs = {'$t0', '$t1', '$t2', '$t3', '$t4', '$t5', '$t6', '$t7', '$t8'}
     putInstr('.data')
 
@@ -57,13 +61,13 @@ def putLab(lab, instr = ''):
     """Emit label lab with optional instruction; lab may be a single
     label or a list of labels"""
     if type(lab) == list:
-        for l in lab[:-1]: asm.append((l, '', ''))
-        asm.append((lab[-1], instr, ''))
-    else: asm.append((lab, instr, ''))
+        for l in lab[:-1]: instructions.append((l, '', ''))
+        instructions.append((lab[-1], instr, ''))
+    else: instructions.append((lab, instr, ''))
 
 def putInstr(instr, target = ''):
     """Emit an instruction"""
-    asm.append(('', instr, target))
+    instructions.append(('', instr, target))
 
 def putOp(op, a, b, c):
     """Emit instruction op with three operands, a, b, c; c can be register or immediate"""
@@ -102,17 +106,18 @@ def genArray(a):
     a.size = a.length * a.base.size
     return a
 
-# For each global variable, `genGlobalVars(sc, start)` generates the assembler 
-# _directive_ `.space`, consisting of the identifier as the label and the size 
-# of the variable as the operand. The parameter `sc` contains the top scope 
-# with all declarations parsed so far; only variable declarations from index 
-# `start` on in the top scope are considered. As MIPS instructions are not 
-# allowed to be identifiers, all variables get `_` as suffix to avoid a name clash.
+# For each global variable, `genGlobalVars(sc, start)` adds the identifier
+# to the list of global declarations and marks it as unused
+# The parameter `sc` contains the top scope  with all declarations parsed so far; 
+# only variable declarations from index `start` on in the top scope are considered. 
+# As MIPS instructions are not allowed to be identifiers, all variables get `_` 
+# as suffix to avoid a name clash.
 def genGlobalVars(sc, start):
     for i in range(len(sc) - 1, start - 1, - 1):
         if type(sc[i]) == Var:
             sc[i].adr = sc[i].name + '_'
-            putLab(sc[i].adr, '.space ' + str(sc[i].tp.size))
+            declarations.append( (sc[i].adr, sc[i].tp.size) )
+            usedDecl[sc[i].adr] = False
 
 # Procedure `genProgEntry(ident)` takes the program's name as a parameter. 
 # Directives for marking the beginning of the main program are generated; the 
@@ -134,7 +139,30 @@ def genProgExit(x):
     putInstr('li $v0, 10')
     putInstr('syscall')
     putInstr('.end main')
-    return '\n'.join(assembly(l, i, t) for (l, i, t) in asm)
+    runOptimizations()
+    insertDeclarations()
+    return '\n'.join(assembly(l, i, t) for (l, i, t) in instructions)
+
+def runOptimizations():
+    removeUnusedVariables()
+
+def insertDeclarations():
+    global instructions
+    instructions = [instructions[0]] + declarations + instructions[1:]
+
+# Parse through the list of declarations
+# If we've marked it as being used, keep it
+# Then generate the assembler  _directive_ `.space`, consisting of the 
+# identifier as the label and the size of the variable as the operand. 
+def removeUnusedVariables():
+    global declarations
+    used = [] #decl for decl in declarations if usedDecl[decl]]
+    for decl in declarations:
+        name = decl[0]
+        size = decl[1]
+        if usedDecl[name]:
+            used.append( (name, '.space ' + str(size), '') )
+    declarations = used
 
 # Procedure `newLabel()` generates a new unique label on each call.
 def newLabel():
@@ -172,12 +200,15 @@ class Cond:
 # Procedure `loadItemReg(x, r)` generates code for loading item `x` to register 
 # `r`, assuming `x` is `Var`, `Const`, or `Reg`. If a constant is too large to 
 # fit in 16 bits immediate addressing, an error message is generated.
+# If we're loading a variable, mark it as being used
 def testRange(x):
     if x.val >= 0x8000 or x.val < -0x8000: mark('value too large')
 
 def loadItemReg(x, r):
     if type(x) == Var: 
-        putMemOp('lw', r, x.reg, x.adr); releaseReg(x.reg)
+        putMemOp('lw', r, x.reg, x.adr)
+        releaseReg(x.reg)
+        usedDecl[x.adr] = True
     elif type(x) == Const:
         testRange(x); putOp('addi', r, R0, x.val)
     elif type(x) == Reg: # move to register r
@@ -330,6 +361,7 @@ def genIndex(x, y):
 # Procedure `genAssign(x, y)` generates code for `x := y`, provided `x` is 
 # `Var`. Item `x` is loaded into a register if it is not already there; if `x` 
 # is `Cond`, then either `0` or `1` is loaded into a register.
+# Mark variable `x` as being used.
 def genAssign(x, y):
     """Assume x is Var, generate x := y"""
     if type(y) == Cond:
@@ -342,6 +374,7 @@ def genAssign(x, y):
         putLab(lab)
     elif type(y) != Reg: y = loadItem(y); r = y.reg
     else: r = y.reg
+    usedDecl[x.adr] = True
     putMemOp('sw', r, x.reg, x.adr); releaseReg(r)
 
 
