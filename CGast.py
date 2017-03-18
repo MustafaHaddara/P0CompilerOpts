@@ -1,3 +1,4 @@
+# coding: utf-8
 # code generator for producing the AST only, with facilities for printing
 
 from SC import mark, TIMES, DIV, MOD, AND, PLUS, MINUS, OR, EQ, NE, LT, \
@@ -82,8 +83,11 @@ class FieldSelection:
 
 # public functions
 
-def init():
-    pass
+def genBool(b):
+    b.size = 4; return b
+
+def genInt(i):
+    i.size = 4; return i
 
 def genRec(r):
     """Assuming r is Record, determine fields offsets and the record size"""
@@ -105,16 +109,16 @@ def genLocalVars(sc, start):
 def genGlobalVars(sc, start):
     pass
 
-def progStart():
+def genProgStart():
     pass
 
-def progEntry(ident):
+def genProgEntry(ident):
     pass
 
-def progExit(x):
+def genProgExit(x):
     return x
 
-def procStart():
+def genProcStart():
     pass
 
 def genFormalParams(sc):
@@ -154,16 +158,16 @@ def genAssign(x, y):
     return Assignment(x, y)
 
 def genActualPara(ap, fp, n):
-    pass
+    return ap
 
-def genCall(x): # parameter missing
-    return Call(x.name, [])
+def genCall(x, ap):
+    return Call(x.name, ap)
 
-def genRead(x): # parameters missing
-    return Call('read', [])
+def genRead(x):
+    return Call('read', [x])
 
-def genWrite(x): # parameters missing
-    return Call('write', [])
+def genWrite(x):
+    return Call('write', [x])
 
 def genWriteln():
     return Call('writeln', [])
@@ -183,9 +187,9 @@ def genThen(x, y):
 def genIfElse(x, y, z):
     return IfElse(x, y, z)
 
-
 def genTarget():
     pass
 
 def genWhile(t, x, y):
     return While(x, y)
+
