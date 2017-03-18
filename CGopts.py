@@ -3,7 +3,13 @@
 # ### P0 Code Generator for MIPS
 # #### Emil Sekerinski, February 2017
 # 
-# The generated code is kept in memory and all code generation procedures continuously append to that code: procedure `genProgStart` initializes the generator, then `gen`-prefixed procedures are to be called for P0 constructs as in order in which they are recognized by a recursive descent parser, and finally procedure `genProgExit` returns the generated code in assembly language as a string in a format that can be read in by the SPIM simulator. The generation procedures are:
+# The generated code is kept in memory and all code generation procedures 
+# continuously append to that code: procedure `genProgStart` initializes the 
+# generator, then `gen`-prefixed procedures are to be called for P0 constructs 
+# as in order in which they are recognized by a recursive descent parser, and 
+# finally procedure `genProgExit` returns the generated code in assembly 
+# language as a string in a format that can be read in by the SPIM simulator. 
+# The generation procedures are:
 # - `genBool`, `genInt`, `genRec`, `genArray`
 # - `genProgStart`, `genGlobalVars`, `genProgEntry`, `genProgExit`
 # - `genProcStart`, `genFormalParams`, `genLocalVars`, `genProcEntry`, `genProcExit`
@@ -11,14 +17,12 @@
 # - `genAssign`, `genActualPara`, `genCall`, `genRead`, `genWrite`, `genWriteln`
 # - `genSeq`, `genCond`, `genIfThen`, `genThen`, `genIfElse`, `genTarget`, `genWhile`
 # 
-# Errors in the code generator are reported by calling `mark` of the scanner. The data types of the symbol table are used to specify the P0 constructs for which code is to be generated.
-
-# In[ ]:
-
-import nbimporter
-from SC import TIMES, DIV, MOD, AND, PLUS, MINUS, OR, EQ, NE, LT, GT, LE,      GE, NOT, TILDE, AMP, BAR, mark
+# Errors in the code generator are reported by calling `mark` of the scanner. 
+# The data types of the symbol table are used to specify the P0 constructs for 
+# which code is to be generated.
+from SC import TIMES, DIV, MOD, AND, PLUS, MINUS, OR, EQ, NE, LT, GT, LE, \
+     GE, NOT, TILDE, AMP, BAR, mark
 from ST import Var, Ref, Const, Type, Proc, StdProc, Int, Bool
-
 
 # Following variables determine the state of the code generator:
 # 
@@ -30,21 +34,16 @@ from ST import Var, Ref, Const, Type, Proc, StdProc, Int, Bool
 #   - an instruction, possibly with operands
 #   - a target (for branch and jump instructions)
 
-# Procedure `genProgStart()` initializes these variables. Registers `$t0` to `$t9` are used as general-purpose registers.
-
-# In[9]:
-
+# Procedure `genProgStart()` initializes these variables. Registers `$t0` to 
+# `$t9` are used as general-purpose registers.
 def genProgStart():
     global asm, curlev, label, regs
     asm, curlev, label = [], 0, 0
     regs = {'$t0', '$t1', '$t2', '$t3', '$t4', '$t5', '$t6', '$t7', '$t8'}
     putInstr('.data')
 
-
-# Reserved registers are `$0` for the constant `0`, `$fp` for the frame pointer, `$sp` for the stack pointer, and `$ra` for the return address (dynamic link).
-
-# In[10]:
-
+# Reserved registers are `$0` for the constant `0`, `$fp` for the frame pointer, 
+# `$sp` for the stack pointer, and `$ra` for the return address (dynamic link).
 R0 = '$0'; FP = '$fp'; SP = '$sp'; LNK = '$ra'
 
 def obtainReg():
@@ -53,9 +52,6 @@ def obtainReg():
 
 def releaseReg(r):
     if r not in (R0, SP, FP, LNK): regs.add(r)
-
-
-# In[ ]:
 
 def putLab(lab, instr = ''):
     """Emit label lab with optional instruction; lab may be a single
@@ -81,14 +77,12 @@ def putMemOp(op, a, b, c):
     if b == R0: putInstr(op + ' ' + a + ', ' + str(c))
     else: putInstr(op + ' ' + a + ', ' + str(c) + '(' + b + ')')
 
-
-# Following procedures "generate code" for all P0 types by determining the size of objects and store in the `size` field.
+# Following procedures "generate code" for all P0 types by determining the size 
+# of objects and store in the `size` field.
 # - Integers and booleans occupy 4 bytes
-# - The size of a record is the sum of the sizes of its field; the offset of a field is the sum of the size of the preceding fields
+# - The size of a record is the sum of the sizes of its field; the offset of a 
+#   field is the sum of the size of the preceding fields
 # - The size of an array is its length times the size of the base type.
-
-# In[ ]:
-
 def genBool(b):
     b.size = 4; return b
 
@@ -108,33 +102,30 @@ def genArray(a):
     a.size = a.length * a.base.size
     return a
 
-
-# For each global variable, `genGlobalVars(sc, start)` generates the assembler _directive_ `.space`, consisting of the identifier as the label and the size of the variable as the operand. The parameter `sc` contains the top scope with all declarations parsed so far; only variable declarations from index `start` on in the top scope are considered. As MIPS instructions are not allowed to be identifiers, all variables get `_` as suffix to avoid a name clash.
-
-# In[ ]:
-
+# For each global variable, `genGlobalVars(sc, start)` generates the assembler 
+# _directive_ `.space`, consisting of the identifier as the label and the size 
+# of the variable as the operand. The parameter `sc` contains the top scope 
+# with all declarations parsed so far; only variable declarations from index 
+# `start` on in the top scope are considered. As MIPS instructions are not 
+# allowed to be identifiers, all variables get `_` as suffix to avoid a name clash.
 def genGlobalVars(sc, start):
     for i in range(len(sc) - 1, start - 1, - 1):
         if type(sc[i]) == Var:
             sc[i].adr = sc[i].name + '_'
             putLab(sc[i].adr, '.space ' + str(sc[i].tp.size))
 
-
-# Procedure `genProgEntry(ident)` takes the program's name as a parameter. Directives for marking the beginning of the main program are generated; the program's name is it not used. 
-
-# In[ ]:
-
+# Procedure `genProgEntry(ident)` takes the program's name as a parameter. 
+# Directives for marking the beginning of the main program are generated; the 
+# program's name is it not used. 
 def genProgEntry(ident):
     putInstr('.text')
     putInstr('.globl main')
     putInstr('.ent main')
     putLab('main')
 
-
-# Procedure `genProgExit(x)` takes parameter `x` with the result of previous `gen-` calls, generates code for exiting the program, directives for marking the end of the main program, and returns the complete assembly code.
-
-# In[11]:
-
+# Procedure `genProgExit(x)` takes parameter `x` with the result of previous 
+# `gen-` calls, generates code for exiting the program, directives for marking 
+# the end of the main program, and returns the complete assembly code.
 def assembly(l, i, t):
     """Convert label l, instruction i, target t to assembly format"""
     return (l + ':\t' if l else '\t') + i + (', ' + t if t else '')
@@ -145,23 +136,28 @@ def genProgExit(x):
     putInstr('.end main')
     return '\n'.join(assembly(l, i, t) for (l, i, t) in asm)
 
-
 # Procedure `newLabel()` generates a new unique label on each call.
-
-# In[ ]:
-
 def newLabel():
     global label
     label += 1
     return 'L' + str(label)
 
-
-# The code generator _delays the generation of code_ until it is clear that no better code can be generated. For this, the not-yet-generated result of an expressions and the location of a variable is stored in _items_. In addition to the symbol table types `Var`, `Ref`, `Const`, the generator uses two more item types:
-# - `Reg(tp, reg)` for integers or boolean values stored in a register; the register can be `$0` for constants `0` and `false`
-# - `Cond(cond, left, right)` for short-circuited Boolean expressions with two branch targets. The relation `cond` must be one of `'EQ'`, `'NE'`, `'LT'`, `'GT'`, `'LE'`, `'GE'`. The operands `left`, `right` are either registers or constants, but one has to be a register. The result of the comparison is represented by two branch targets, stored as fields, where the evaluation continues if the result of the comparison is true or false. The branch targets are lists of unique labels, with targets in each list denoting the same location. If `right` is `$0`, then `'EQ'` and `'NE'` for `cond` can be used for branching depending on whether `left` is `true` or `false`.
-
-# In[ ]:
-
+# The code generator _delays the generation of code_ until it is clear that no 
+# better code can be generated. For this, the not-yet-generated result of an 
+# expressions and the location of a variable is stored in _items_. In addition 
+# to the symbol table types `Var`, `Ref`, `Const`, the generator uses two more 
+# item types:
+# - `Reg(tp, reg)` for integers or boolean values stored in a register; the 
+#    register can be `$0` for constants `0` and `false`
+# - `Cond(cond, left, right)` for short-circuited Boolean expressions with two 
+#   branch targets. The relation `cond` must be one of `'EQ'`, `'NE'`, `'LT'`, 
+#   `'GT'`, `'LE'`, `'GE'`. The operands `left`, `right` are either registers or 
+#   constants, but one has to be a register. The result of the comparison is 
+#   represented by two branch targets, stored as fields, where the evaluation 
+#   continues if the result of the comparison is true or false. The branch 
+#   targets are lists of unique labels, with targets in each list denoting the 
+#   same location. If `right` is `$0`, then `'EQ'` and `'NE'` for `cond` can be 
+#   used for branching depending on whether `left` is `true` or `false`.
 class Reg:
     def __init__(self, tp, reg):
         # tp is Bool or Int
@@ -173,11 +169,9 @@ class Cond:
         self.tp, self.cond, self.left, self.right = Bool, cond, left, right
         self.labA, self.labB = [newLabel()], [newLabel()]
 
-
-# Procedure `loadItemReg(x, r)` generates code for loading item `x` to register `r`, assuming `x` is `Var`, `Const`, or `Reg`. If a constant is too large to fit in 16 bits immediate addressing, an error message is generated.
-
-# In[12]:
-
+# Procedure `loadItemReg(x, r)` generates code for loading item `x` to register 
+# `r`, assuming `x` is `Var`, `Const`, or `Reg`. If a constant is too large to 
+# fit in 16 bits immediate addressing, an error message is generated.
 def testRange(x):
     if x.val >= 0x8000 or x.val < -0x8000: mark('value too large')
 
@@ -190,11 +184,12 @@ def loadItemReg(x, r):
         putOp('add', r, x.reg, R0)
     else: assert False
 
-
-# Procedure `loadItem(x)` generates code for loading item `x`, which has to be `Var` or `Const`, into a new register and returns a `Reg` item; if `x` is `Const` and has value `0`, no code is generated and register `R0` is used instead. For procedure `loadBool(x)`, the type of item `x` has to be `Bool`; if `x` is not a constant, it is loaded into a register and a new `Cond` item is returned.
-
-# In[13]:
-
+# Procedure `loadItem(x)` generates code for loading item `x`, which has to be 
+# `Var` or `Const`, into a new register and returns a `Reg` item; if `x` is 
+# `Const` and has value `0`, no code is generated and register `R0` is used 
+# instead. For procedure `loadBool(x)`, the type of item `x` has to be `Bool`; 
+# if `x` is not a constant, it is loaded into a register and a new `Cond` item 
+# is returned.
 def loadItem(x):
     if type(x) == Const and x.val == 0: r = R0 # use R0 for "0"
     else: r = obtainReg(); loadItemReg(x, r)
@@ -205,11 +200,9 @@ def loadBool(x):
     else: r = obtainReg(); loadItemReg(x, r)
     return Cond(NE, r, R0)
 
-
-# Procedure `put(cd, x, y)` generates code for `x op y`, where `op` is an operation with mnemonic `cd`. Items `x`, `y` have to be `Var`, `Const`, `Reg`. An updated item `x` is returned.
-
-# In[ ]:
-
+# Procedure `put(cd, x, y)` generates code for `x op y`, where `op` is an 
+# operation with mnemonic `cd`. Items `x`, `y` have to be `Var`, `Const`, `Reg`.
+# An updated item `x` is returned.
 def put(cd, x, y):
     if type(x) != Reg: x = loadItem(x)
     if x.reg == R0: x.reg, r = obtainReg(), R0
@@ -221,13 +214,16 @@ def put(cd, x, y):
         putOp(cd, x.reg, r, y.reg); releaseReg(y.reg)
     return x
 
-
-# Procedures `genVar`, `genConst`, `genUnaryOp`, `genBinaryOp`, `genRelation`, `genSelect`, and `genIndex` generate code for expressions (e.g. right hand side of assignments) and for  locations (e.g. left hand side of assignments).
+# Procedures `genVar`, `genConst`, `genUnaryOp`, `genBinaryOp`, `genRelation`, 
+# `genSelect`, and `genIndex` generate code for expressions (e.g. right hand 
+# side of assignments) and for  locations (e.g. left hand side of assignments).
 # 
-# Procedure `genVar(x)` allows `x` to refer to a global variable, local variable, or procedure parameter. References to variables on intermediate level is not supported. Local variables and procedure parameters are addressed FP-relative. For global variables, the reference is kept symbolic, to be resolved later by the assembler. Item `x` is `Var` or `Ref`; if it is `Ref`, the reference is loaded into a new register. A new `Var` item with the location is returned.
-
-# In[ ]:
-
+# Procedure `genVar(x)` allows `x` to refer to a global variable, local variable, 
+# or procedure parameter. References to variables on intermediate level is not 
+# supported. Local variables and procedure parameters are addressed FP-relative. 
+# For global variables, the reference is kept symbolic, to be resolved later by 
+# the assembler. Item `x` is `Var` or `Ref`; if it is `Ref`, the reference is 
+# loaded into a new register. A new `Var` item with the location is returned.
 def genVar(x):
     if x.lev == 0: s = R0 # global variable at x.adr
     elif x.lev == curlev: s = FP # local variable, FP relative
@@ -241,20 +237,16 @@ def genVar(x):
     else: assert False
     return y
 
-
 # Procedure `genConst(x)` does not need to generate any code.
-
-# In[1]:
-
 def genConst(x):
     # x is Const
     return x
 
-
-# Procedure `genUnaryOp(op, x)` generates code for `op x` if `op` is `MINUS`, `NOT` and `x` is `Int`, `Bool`; if `op` is `AND`, `OR`, item `x` is the first operand. If it is not already a `Cond` item, it is made so which is loaded into a register. A branch instruction is generated for `OR` and a branch instruction with a negated condition for `AND`.
-
-# In[ ]:
-
+# Procedure `genUnaryOp(op, x)` generates code for `op x` if `op` is `MINUS`, 
+# `NOT` and `x` is `Int`, `Bool`; if `op` is `AND`, `OR`, item `x` is the first 
+# operand. If it is not already a `Cond` item, it is made so which is loaded 
+# into a register. A branch instruction is generated for `OR` and a branch 
+# instruction with a negated condition for `AND`.
 def negate(cd):
     return {EQ: NE, NE: EQ, LT: GE, LE: GT, GT: LE, GE: LT}[cd]
 
@@ -282,11 +274,9 @@ def genUnaryOp(op, x):
     else: assert False
     return x
 
-
-# Procedure `genBinaryOp(op, x, y)` generates code for `x op y` if `op` is `PLUS`, `MINUS`, `TIMES`, `DIV`, `MOD`. If `op` is `AND`, `OR`, operand `y` is made a `Cond` item it if is not so already and the branch targets are merged. 
-
-# In[ ]:
-
+# Procedure `genBinaryOp(op, x, y)` generates code for `x op y` if `op` is 
+# `PLUS`, `MINUS`, `TIMES`, `DIV`, `MOD`. If `op` is `AND`, `OR`, operand `y` is
+# made a `Cond` item it if is not so already and the branch targets are merged. 
 def genBinaryOp(op, x, y):
     if op == PLUS: y = put('add', x, y)
     elif op == MINUS: y = put('sub', x, y)
@@ -304,30 +294,25 @@ def genBinaryOp(op, x, y):
     else: assert False
     return y
 
-
-# Procedure `genRelation(op, x, y)` generates code for `x op y` if `op` is `EQ`, `NE`, `LT`, `LE`, `GT`, `GE`. Items `x` and `y` cannot be both constants. A new `Cond` item is returned.
-
-# In[ ]:
-
+# Procedure `genRelation(op, x, y)` generates code for `x op y` if `op` is `EQ`,
+# `NE`, `LT`, `LE`, `GT`, `GE`. Items `x` and `y` cannot be both constants. A 
+# new `Cond` item is returned.
 def genRelation(op, x, y):
     if type(x) != Reg: x = loadItem(x)
     if type(y) != Reg: y = loadItem(y)
     return Cond(op, x.reg, y.reg)
 
-
-# Procedure `genSelect(x, f)` "generates code" for `x.f`, provided `f` is in `x.fields`. Only `x.adr` is updated, no code is generated. An updated item is returned.
-
-# In[ ]:
-
+# Procedure `genSelect(x, f)` "generates code" for `x.f`, provided `f` is in 
+# `x.fields`. Only `x.adr` is updated, no code is generated. An updated item is 
+# returned.
 def genSelect(x, f):
-    x.tp, x.adr = f.tp, x.adr + f.offset if type(x.adr) == int else                         x.adr + '+' + str(f.offset)
+    x.tp, x.adr = f.tp, x.adr + f.offset if type(x.adr) == int else x.adr + '+' + str(f.offset)
     return x
 
-
-# Procedure `genIndex(x, y)` generates code for `x[y]`, assuming `x` is `Var` or `Ref`, `x.tp` is `Array`, and `y.tp` is `Int`. If `y` is `Const`, only `x.adr` is updated and no code is generated, otherwise code for array index calculation is generated.
-
-# In[ ]:
-
+# Procedure `genIndex(x, y)` generates code for `x[y]`, assuming `x` is `Var` or
+# `Ref`, `x.tp` is `Array`, and `y.tp` is `Int`. If `y` is `Const`, only `x.adr`
+# is updated and no code is generated, otherwise code for array index 
+# calculation is generated.
 def genIndex(x, y):
     if type(y) == Const:
         offset = (y.val - x.tp.lower) * x.tp.base.size
@@ -342,11 +327,9 @@ def genIndex(x, y):
     x.tp = x.tp.base
     return x
 
-
-# Procedure `genAssign(x, y)` generates code for `x := y`, provided `x` is `Var`. Item `x` is loaded into a register if it is not already there; if `x` is `Cond`, then either `0` or `1` is loaded into a register.
-
-# In[ ]:
-
+# Procedure `genAssign(x, y)` generates code for `x := y`, provided `x` is 
+# `Var`. Item `x` is loaded into a register if it is not already there; if `x` 
+# is `Cond`, then either `0` or `1` is loaded into a register.
 def genAssign(x, y):
     """Assume x is Var, generate x := y"""
     if type(y) == Cond:
@@ -384,10 +367,11 @@ def genAssign(x, y):
 # - callee loads `$fp` from `$fp - 4`
 # - callee returns
 # 
-# For each local variable, `genLocalVars(sc, start)` updates the entry of the variable with the FP-relative address and returns their total size. The parameter `sc` contains the top scope with all local declarations parsed so far; only variable declarations from index `start` on in the top scope are considered.
-
-# In[ ]:
-
+# For each local variable, `genLocalVars(sc, start)` updates the entry of the 
+# variable with the FP-relative address and returns their total size. The 
+# parameter `sc` contains the top scope with all local declarations parsed so 
+# far; only variable declarations from index `start` on in the top scope are 
+# considered.
 def genLocalVars(sc, start):
     s = 0 # local block size
     for i in range(start, len(sc)):
@@ -396,21 +380,16 @@ def genLocalVars(sc, start):
             sc[i].adr = - s - 8
     return s
 
-
 # Procedure `genProcStart()` generate the directive for starting instructions.
-
-# In[ ]:
-
 def genProcStart():
     global curlev
     curlev = curlev + 1
     putInstr('.text')
 
 
-# Procedure `genFormalParams(sc)` determines the FP-relative address of all parameters in the list `sc` of procedure parameters. Each parameter must be of type `Int` or `Bool` or must be a reference parameter.
-
-# In[ ]:
-
+# Procedure `genFormalParams(sc)` determines the FP-relative address of all 
+# parameters in the list `sc` of procedure parameters. Each parameter must be of
+# type `Int` or `Bool` or must be a reference parameter.
 def genFormalParams(sc):
     s = 0 # parameter block size
     for p in reversed(sc):
@@ -419,12 +398,8 @@ def genFormalParams(sc):
         else: mark('no structured value parameters')
     return s
 
-
-# Procedures `genProcEntry(ident, parsize, localsize)` and `genProcExit(x, parsize, localsize)` generate the procedure prologue and epilogue.
-# 
-
-# In[ ]:
-
+# Procedures `genProcEntry(ident, parsize, localsize)` and 
+# `genProcExit(x, parsize, localsize)` generate the procedure prologue and epilogue.
 def genProcEntry(ident, parsize, localsize):
     putInstr('.globl ' + ident)            # global declaration directive
     putInstr('.ent ' + ident)              # entry point directive
@@ -442,11 +417,10 @@ def genProcExit(x, parsize, localsize):
     putMemOp('lw', FP, FP, - 4)   # pop frame pointer
     putInstr('jr $ra')            # return
 
-
-# Procedure `genActualPara(ap, fp, n)` assume that `ap` is an item with the actual parameter, `fp` is the entry for the formal parameter, and `n` is the parameter number. The parameters are pushed SP-relative on the stack. The formal parameter is either `Var` or `Ref`.
-
-# In[ ]:
-
+# Procedure `genActualPara(ap, fp, n)` assume that `ap` is an item with the 
+# actual parameter, `fp` is the entry for the formal parameter, and `n` is the 
+# parameter number. The parameters are pushed SP-relative on the stack. The 
+# formal parameter is either `Var` or `Ref`.
 def genActualPara(ap, fp, n):
     if type(fp) == Ref:  #  reference parameter, assume p is Var
         if ap.adr != 0:  #  load address in register
@@ -459,19 +433,13 @@ def genActualPara(ap, fp, n):
             putMemOp('sw', ap.reg, SP, - 4 * (n + 1)); releaseReg(ap.reg)
         else: mark('unsupported parameter type')
 
-
 # Procedure `genCall(pr, ap)` assumes `pr` is `Proc` and `ap` is a list of actual parameters.
-
-# In[ ]:
-
 def genCall(pr, ap):
     putInstr('jal', pr.name)
 
-
-# Procedures `genRead(x)`, `genWrite(x)`, `genWriteln()` generate code for SPIM-defined "syscalls"; `genRead(x)` and assumes that `x` is `Var` and `genWrite(x)` assumes that `x` is `Ref`, `Var`, `Reg`.  
-
-# In[2]:
-
+# Procedures `genRead(x)`, `genWrite(x)`, `genWriteln()` generate code for 
+# SPIM-defined "syscalls"; `genRead(x)` and assumes that `x` is `Var` and 
+# `genWrite(x)` assumes that `x` is `Ref`, `Var`, `Reg`.  
 def genRead(x):
     putInstr('li $v0, 5'); putInstr('syscall')
     putMemOp('sw', '$v0', x.reg, x.adr)
@@ -482,7 +450,6 @@ def genWrite(x):
 def genWriteln():
     putInstr('li $v0, 11'); putInstr("li $a0, '\\n'"); putInstr('syscall')
 
-
 # For control structures:
 # - `genSeq(x, y)` generates `x ; y`, assuming `x`, `y` are statements
 # - `genCond(x)` generates code for branching on `x`, assuming that `x` is of type `Bool`
@@ -491,9 +458,6 @@ def genWriteln():
 # - `genIfElse(x, y, z)` generates code for `z` in `if x then y else z`
 # - `genTarget()` generates and returns a target for backward branches
 # - `genWhile(lab, x, y)` generates code for `y` in `while x do y`, assuming that target `lab` was generated before `x`.
-
-# In[ ]:
-
 def genSeq(x, y):
     pass
 
