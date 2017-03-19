@@ -555,7 +555,8 @@ def declarations(allocVar):
         else: mark("; expected")
         localsize = declarations(CG.genLocalVars)
         CG.genProcEntry(ident, parsize, localsize)
-        x = compoundStatement(); CG.genProcExit(x, parsize, localsize)
+        x = compoundStatement()
+        CG.genProcExit(x, parsize, localsize)
         closeScope() #  scope for parameters and body closed
         if SC.sym == SEMICOLON: getSym()
         else: mark("; expected")

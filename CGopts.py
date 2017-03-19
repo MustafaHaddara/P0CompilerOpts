@@ -49,13 +49,16 @@ from ST import Var, Ref, Const, Type, Proc, StdProc, Int, Bool
 # Procedure `genProgStart()` initializes these variables. Registers `$t0` to 
 # `$t9` are used as general-purpose registers.
 def genProgStart():
-    global declarations, instructions, usedVars, compiledProcedures, curlev, label, regs, writtenText
+    global declarations, instructions, usedVars, compiledProcedures, procNames
+    global curlev, label, vname, regs, writtenText
     declarations = [ [] ]
     instructions = [ [] ]
     usedVars = [ {} ]
     compiledProcedures = []
+    procNames = []
     curlev = 0
     label = 0
+    vname = 0
     regs = {'$t0', '$t1', '$t2', '$t3', '$t4', '$t5', '$t6', '$t7', '$t8'}
     writtenText = False
     putInstr('.data')
@@ -166,9 +169,24 @@ def combineInstructions():
     prelude += instructions[curlev][1:]
     instructions[curlev] = prelude
 
-def insertProcDeclarations():
-    global instructions
-    instructions[curlev] = declarations[curlev] + instructions[curlev]
+def processProcInstructions(realAddrs, localsize):
+    global instructions, procNames
+    currentInstructions = instructions[curlev]
+    procName = '__LOCAL_' + procNames[-1]
+    for i in range(len(currentInstructions)):
+        (l,ins,target) = currentInstructions[i]
+        if procName in ins:
+            ins = ins.replace(procName, localsize)
+        for varAddr in realAddrs:
+            if type(varAddr) != str:
+                continue
+            varSize = str(realAddrs[varAddr])            
+            if varAddr in ins:
+                ins = ins.replace(varAddr, varSize)
+            if type(target) == str and varAddr in target:
+                target = target.replace(varAddr, varSize)
+        currentInstructions[i] = (l, ins, target)
+    instructions[curlev] = currentInstructions
 
 # Parse through the list of declarations
 # If we've marked it as being used, keep it
@@ -184,6 +202,21 @@ def removeUnusedVariables():
             used.append( (name, '.space ' + str(size), '') )
     declarations[curlev] = used
 
+def removeUnusedProcVariables():
+    global declarations, instructions
+    used = []
+    realAddrs = {}
+    s = 0
+    for decl in declarations[curlev]:
+        name = decl[0]
+        size = decl[1]
+        if usedVars[curlev][name]:
+            s = s + size
+            realAddrs[name] = -s - 8
+            used.append(decl)
+    declarations[curlev] = used
+    return realAddrs,s
+
 def varUsed(v):
     usedVars[curlev][v] = True
 
@@ -192,6 +225,12 @@ def newLabel():
     global label
     label += 1
     return 'L' + str(label)
+
+# Procedure `newVarName()` generates a new unique variable placeholder name on each call.
+def newVarName():
+    global vname
+    vname += 1
+    return '__V' + str(vname)
 
 # The code generator _delays the generation of code_ until it is clear that no 
 # better code can be generated. For this, the not-yet-generated result of an 
@@ -397,7 +436,7 @@ def genAssign(x, y):
         putLab(lab)
     elif type(y) != Reg: y = loadItem(y); r = y.reg
     else: r = y.reg
-    varUsed(x.adr)
+    varUsed(str(x.adr))
     putMemOp('sw', r, x.reg, x.adr); releaseReg(r)
 
 
@@ -433,8 +472,11 @@ def genLocalVars(sc, start):
     for i in range(start, len(sc)):
         if type(sc[i]) == Var:
             s = s + sc[i].tp.size
-            sc[i].adr = - s - 8
-            usedVars[curlev][sc[i].adr] = False
+            sc[i].adr = newVarName() # replace the address with a random name
+                                     # compute the real address at the end
+            name = str(sc[i].adr)
+            declarations[curlev].append( (name, sc[i].tp.size) )
+            usedVars[curlev][name] = False
     return s
 
 # Procedure `genProcStart()` adds a new scope to the declarations, instructions,
@@ -461,13 +503,15 @@ def genFormalParams(sc):
 # Procedures `genProcEntry(ident, parsize, localsize)` and 
 # `genProcExit(x, parsize, localsize)` generate the procedure prologue and epilogue.
 def genProcEntry(ident, parsize, localsize):
-    putInstr('.globl ' + ident)            # global declaration directive
-    putInstr('.ent ' + ident)              # entry point directive
-    putLab(ident)                          # procedure entry label
-    putMemOp('sw', FP, SP, - parsize - 4)  # push frame pointer
-    putMemOp('sw', LNK, SP, - parsize - 8) # push return address
-    putOp('sub', FP, SP, parsize)          # set frame pointer
-    putOp('sub', SP, FP, localsize + 8)    # set stack pointer
+    putInstr('.globl ' + ident)              # global declaration directive
+    putInstr('.ent ' + ident)                # entry point directive
+    putLab(ident)                            # procedure entry label
+    putMemOp('sw', FP, SP, - parsize - 4)    # push frame pointer
+    putMemOp('sw', LNK, SP, - parsize - 8)   # push return address
+    putOp('sub', FP, SP, parsize)            # set frame pointer
+    putOp('sub', SP, FP, '__LOCAL_' + ident) # set stack pointer to temp label, 
+                                             # which we replace and compute at the end
+    procNames.append(ident)
 
 def genProcExit(x, parsize, localsize):
     global curlev, declarations, instructions, usedVars, compiledProcedures
@@ -478,13 +522,14 @@ def genProcExit(x, parsize, localsize):
     putInstr('jr $ra')            # return
     
     # apply optimizations
-    removeUnusedVariables()
-    insertProcDeclarations()
+    realAddresses,localsize = removeUnusedProcVariables()
+    processProcInstructions(realAddresses, str(localsize))
 
     # remove declarations, instructions, usedVars for the procedure we're exiting
     procDecl = declarations.pop()
     procIns = instructions.pop()
     procUsedVars = usedVars.pop()
+    procNames.pop()
     curlev = curlev - 1
     # store the compiled instructions in compiledProcedures
     compiledProcedures.append(procIns)
