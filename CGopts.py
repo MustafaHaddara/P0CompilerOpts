@@ -29,21 +29,35 @@ from ST import Var, Ref, Const, Type, Proc, StdProc, Int, Bool
 # - `curlev` is the current level of nesting of P0 procedures
 # - `regs` is the set of available MIPS registers for expression evaluation
 # - `label` is a counter for generating new labels
-# - `declarations` is a list of declared variables (from the .data section)
-#   This list consists of:
+# - `declarations` is a list of list of declared variables (from the .data section)
+#   Each list is a list of declared variables per scope
+#   Each inner list consists of:
 #   - name of the declared variable
 #   - size of the declared variable
-# - `instructions` is a list of triples; each triple consists of three (possibly empty) strings:
+# - `instructions` is a list of lists of triples; 
+#   each list is a list of triples for the current scope
+#   each triple consists of three (possibly empty) strings:
 #   - a label
 #   - an instruction, possibly with operands
 #   - a target (for branch and jump instructions)
+# - `usedVars` is a `var_addr`->`boolean` dictionary, tracking if each global
+#   variable is being used or not. If not, we remove the declaration before 
+#   writing out the mips code
+# - `compiledProcedures` is a list of post-optimization procedure mips instructions
+#   these will be inserted into the program after we're done
 
 # Procedure `genProgStart()` initializes these variables. Registers `$t0` to 
 # `$t9` are used as general-purpose registers.
 def genProgStart():
-    global declarations, instructions, usedDecl, curlev, label, regs
-    declarations, instructions, usedDecl, curlev, label = [], [], {}, 0, 0
+    global declarations, instructions, usedVars, compiledProcedures, curlev, label, regs, writtenText
+    declarations = [ [] ]
+    instructions = [ [] ]
+    usedVars = [ {} ]
+    compiledProcedures = []
+    curlev = 0
+    label = 0
     regs = {'$t0', '$t1', '$t2', '$t3', '$t4', '$t5', '$t6', '$t7', '$t8'}
+    writtenText = False
     putInstr('.data')
 
 # Reserved registers are `$0` for the constant `0`, `$fp` for the frame pointer, 
@@ -61,13 +75,13 @@ def putLab(lab, instr = ''):
     """Emit label lab with optional instruction; lab may be a single
     label or a list of labels"""
     if type(lab) == list:
-        for l in lab[:-1]: instructions.append((l, '', ''))
-        instructions.append((lab[-1], instr, ''))
-    else: instructions.append((lab, instr, ''))
+        for l in lab[:-1]: instructions[-1].append((l, '', ''))
+        instructions[-1].append((lab[-1], instr, ''))
+    else: instructions[-1].append((lab, instr, ''))
 
 def putInstr(instr, target = ''):
     """Emit an instruction"""
-    instructions.append(('', instr, target))
+    instructions[-1].append(('', instr, target))
 
 def putOp(op, a, b, c):
     """Emit instruction op with three operands, a, b, c; c can be register or immediate"""
@@ -116,14 +130,13 @@ def genGlobalVars(sc, start):
     for i in range(len(sc) - 1, start - 1, - 1):
         if type(sc[i]) == Var:
             sc[i].adr = sc[i].name + '_'
-            declarations.append( (sc[i].adr, sc[i].tp.size) )
-            usedDecl[sc[i].adr] = False
+            declarations[curlev].append( (sc[i].adr, sc[i].tp.size) )
+            usedVars[curlev][sc[i].adr] = False
 
 # Procedure `genProgEntry(ident)` takes the program's name as a parameter. 
 # Directives for marking the beginning of the main program are generated; the 
 # program's name is it not used. 
 def genProgEntry(ident):
-    putInstr('.text')
     putInstr('.globl main')
     putInstr('.ent main')
     putLab('main')
@@ -140,15 +153,22 @@ def genProgExit(x):
     putInstr('syscall')
     putInstr('.end main')
     runOptimizations()
-    insertDeclarations()
-    return '\n'.join(assembly(l, i, t) for (l, i, t) in instructions)
+    combineInstructions()
+    return '\n'.join(assembly(l, i, t) for (l, i, t) in instructions[-1])
 
 def runOptimizations():
     removeUnusedVariables()
 
-def insertDeclarations():
+def combineInstructions():
+    prelude =   [instructions[curlev][0]] + declarations[curlev] + [('', '.text', '')]
+    for proc in compiledProcedures:
+        prelude += proc
+    prelude += instructions[curlev][1:]
+    instructions[curlev] = prelude
+
+def insertProcDeclarations():
     global instructions
-    instructions = [instructions[0]] + declarations + instructions[1:]
+    instructions[curlev] = declarations[curlev] + instructions[curlev]
 
 # Parse through the list of declarations
 # If we've marked it as being used, keep it
@@ -156,13 +176,16 @@ def insertDeclarations():
 # identifier as the label and the size of the variable as the operand. 
 def removeUnusedVariables():
     global declarations
-    used = [] #decl for decl in declarations if usedDecl[decl]]
-    for decl in declarations:
+    used = []
+    for decl in declarations[curlev]:
         name = decl[0]
         size = decl[1]
-        if usedDecl[name]:
+        if usedVars[curlev][name]:
             used.append( (name, '.space ' + str(size), '') )
-    declarations = used
+    declarations[curlev] = used
+
+def varUsed(v):
+    usedVars[curlev][v] = True
 
 # Procedure `newLabel()` generates a new unique label on each call.
 def newLabel():
@@ -208,7 +231,7 @@ def loadItemReg(x, r):
     if type(x) == Var: 
         putMemOp('lw', r, x.reg, x.adr)
         releaseReg(x.reg)
-        usedDecl[x.adr] = True
+        varUsed(x.adr)
     elif type(x) == Const:
         testRange(x); putOp('addi', r, R0, x.val)
     elif type(x) == Reg: # move to register r
@@ -264,7 +287,7 @@ def genVar(x):
         r = obtainReg(); putMemOp('lw', r, s, x.adr)
         y.reg, y.adr = r, 0 # variable at (y.reg)
     elif type(x) == Var:
-        y.reg, y.adr = s, x.adr # 
+        y.reg, y.adr = s, x.adr
     else: assert False
     return y
 
@@ -374,7 +397,7 @@ def genAssign(x, y):
         putLab(lab)
     elif type(y) != Reg: y = loadItem(y); r = y.reg
     else: r = y.reg
-    usedDecl[x.adr] = True
+    varUsed(x.adr)
     putMemOp('sw', r, x.reg, x.adr); releaseReg(r)
 
 
@@ -411,13 +434,17 @@ def genLocalVars(sc, start):
         if type(sc[i]) == Var:
             s = s + sc[i].tp.size
             sc[i].adr = - s - 8
+            usedVars[curlev][sc[i].adr] = False
     return s
 
-# Procedure `genProcStart()` generate the directive for starting instructions.
+# Procedure `genProcStart()` adds a new scope to the declarations, instructions,
+# and usedVars global variables
 def genProcStart():
-    global curlev
+    global curlev, declarations, instructions, usedVars
+    declarations.append( [] )
+    instructions.append( [] )
+    usedVars.append( {} )
     curlev = curlev + 1
-    putInstr('.text')
 
 
 # Procedure `genFormalParams(sc)` determines the FP-relative address of all 
@@ -443,12 +470,24 @@ def genProcEntry(ident, parsize, localsize):
     putOp('sub', SP, FP, localsize + 8)    # set stack pointer
 
 def genProcExit(x, parsize, localsize):
-    global curlev
-    curlev = curlev - 1
+    global curlev, declarations, instructions, usedVars, compiledProcedures
+    
     putOp('add', SP, FP, parsize) # restore stack pointer
     putMemOp('lw', LNK, FP, - 8)  # pop return address
     putMemOp('lw', FP, FP, - 4)   # pop frame pointer
     putInstr('jr $ra')            # return
+    
+    # apply optimizations
+    removeUnusedVariables()
+    insertProcDeclarations()
+
+    # remove declarations, instructions, usedVars for the procedure we're exiting
+    procDecl = declarations.pop()
+    procIns = instructions.pop()
+    procUsedVars = usedVars.pop()
+    curlev = curlev - 1
+    # store the compiled instructions in compiledProcedures
+    compiledProcedures.append(procIns)
 
 # Procedure `genActualPara(ap, fp, n)` assume that `ap` is an item with the 
 # actual parameter, `fp` is the entry for the formal parameter, and `n` is the 

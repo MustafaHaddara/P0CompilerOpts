@@ -8,6 +8,7 @@
 # - procedures `Init()`, `newDecl(name, entry)`, `find(name)`, `openScope()`, `topScope()`, `closeScope()` are the operations of the symbol table
 # - procedure `printSymTab()` visualizes the symbol table in a readable textual form with indentation.
 from SC import mark
+import textwrap
 
 def indent(n):
     return textwrap.indent(str(n), '  ')
