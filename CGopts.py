@@ -40,22 +40,19 @@ from ST import Var, Ref, Const, Type, Proc, StdProc, Int, Bool
 #   - a label
 #   - an instruction, possibly with operands
 #   - a target (for branch and jump instructions)
-# - `usedVars` is a `var_addr`->`boolean` dictionary, tracking if each global
-#   variable is being used or not. If not, we remove the declaration before 
-#   writing out the mips code
 # - `compiledProcedures` is a list of post-optimization procedure mips instructions
 #   these will be inserted into the program after we're done
 
 # Procedure `genProgStart()` initializes these variables. Registers `$t0` to 
 # `$t9` are used as general-purpose registers.
 def genProgStart():
-    global declarations, instructions, usedVars, compiledProcedures, procNames
+    global declarations, instructions, compiledProcedures, procNames, fieldVars
     global curlev, label, vname, regs, writtenText
     declarations = [ [] ]
     instructions = [ [] ]
-    usedVars = [ {} ]
     compiledProcedures = []
     procNames = []
+    fieldVars = [ {} ]
     curlev = 0
     label = 0
     vname = 0
@@ -134,7 +131,6 @@ def genGlobalVars(sc, start):
         if type(sc[i]) == Var:
             sc[i].adr = sc[i].name + '_'
             declarations[curlev].append( (sc[i].adr, sc[i].tp.size) )
-            usedVars[curlev][sc[i].adr] = False
 
 # Procedure `genProgEntry(ident)` takes the program's name as a parameter. 
 # Directives for marking the beginning of the main program are generated; the 
@@ -160,7 +156,7 @@ def genProgExit(x):
     return '\n'.join(assembly(l, i, t) for (l, i, t) in instructions[-1])
 
 def runOptimizations():
-    removeUnusedVariables()
+    removeUnusedVariables(genDataDecl)
 
 def combineInstructions():
     prelude =   [instructions[curlev][0]] + declarations[curlev] + [('', '.text', '')]
@@ -169,10 +165,11 @@ def combineInstructions():
     prelude += instructions[curlev][1:]
     instructions[curlev] = prelude
 
-def processProcInstructions(realAddrs, localsize):
+def processProcInstructions(realAddrs, size):
     global instructions, procNames
     currentInstructions = instructions[curlev]
     procName = '__LOCAL_' + procNames[-1]
+    localsize = str(size + 8)
     for i in range(len(currentInstructions)):
         (l,ins,target) = currentInstructions[i]
         if procName in ins:
@@ -188,37 +185,33 @@ def processProcInstructions(realAddrs, localsize):
         currentInstructions[i] = (l, ins, target)
     instructions[curlev] = currentInstructions
 
-# Parse through the list of declarations
-# If we've marked it as being used, keep it
-# Then generate the assembler  _directive_ `.space`, consisting of the 
-# identifier as the label and the size of the variable as the operand. 
-def removeUnusedVariables():
-    global declarations
-    used = []
-    for decl in declarations[curlev]:
-        name = decl[0]
-        size = decl[1]
-        if usedVars[curlev][name]:
-            used.append( (name, '.space ' + str(size), '') )
-    declarations[curlev] = used
-
-def removeUnusedProcVariables():
+ 
+def removeUnusedVariables(f):
     global declarations, instructions
-    used = []
+    currentInstructions = instructions[curlev]
+    temp = []
+    completed = []
     realAddrs = {}
     s = 0
-    for decl in declarations[curlev]:
-        name = decl[0]
-        size = decl[1]
-        if usedVars[curlev][name]:
-            s = s + size
-            realAddrs[name] = -s - 8
-            used.append(decl)
-    declarations[curlev] = used
+    for i in range(len(currentInstructions)):
+        (l,ins,target) = currentInstructions[i]    
+        for decl in declarations[curlev]:
+            name = decl[0]
+            size = decl[1]
+            if name in completed: continue
+            if name in ins or (type(target) == str and name in target):
+                completed.append(name)
+                s = s + size
+                realAddrs[name] = -s - 8
+                temp.append( f(decl) )
+    declarations[curlev] = temp
     return realAddrs,s
 
-def varUsed(v):
-    usedVars[curlev][v] = True
+def genDataDecl(decl):
+    return (decl[0], '.space ' + str(decl[1]), '')
+
+def genProcDecl(decl):
+    return decl
 
 # Procedure `newLabel()` generates a new unique label on each call.
 def newLabel():
@@ -270,7 +263,6 @@ def loadItemReg(x, r):
     if type(x) == Var: 
         putMemOp('lw', r, x.reg, x.adr)
         releaseReg(x.reg)
-        varUsed(x.adr)
     elif type(x) == Const:
         testRange(x); putOp('addi', r, R0, x.val)
     elif type(x) == Reg: # move to register r
@@ -398,14 +390,33 @@ def genRelation(op, x, y):
 # Procedure `genSelect(x, f)` "generates code" for `x.f`, provided `f` is in 
 # `x.fields`. Only `x.adr` is updated, no code is generated. An updated item is 
 # returned.
+# In essence we're treating `x.f` as an entirely different variable than
+# any other element in `x`. In practice they will typically end up next to each
+# other in memory.
+# However with these "optimizations" we don't guarantee that all fields in a record
+# will occupy a contiguous memory space
 def genSelect(x, f):
-    x.tp, x.adr = f.tp, x.adr + f.offset if type(x.adr) == int else x.adr + '+' + str(f.offset)
+    global fieldVars
+    x.tp = f.tp
+    if type(x.adr) == int:
+        x.adr = x.adr + f.offset
+    else:
+        # lookup the field name to see if we've already seen it
+        fieldName = '__' + str(x) + '.' + str(f)
+        if fieldName not in fieldVars[curlev]:
+            tempName = newVarName()
+            declarations[curlev].append( (tempName, f.tp.size) )
+            fieldVars[curlev][fieldName] = tempName
+            x.adr = tempName
+        else:
+            x.adr = fieldVars[curlev][fieldName]
     return x
 
 # Procedure `genIndex(x, y)` generates code for `x[y]`, assuming `x` is `Var` or
 # `Ref`, `x.tp` is `Array`, and `y.tp` is `Int`. If `y` is `Const`, only `x.adr`
 # is updated and no code is generated, otherwise code for array index 
 # calculation is generated.
+# TODO figure out the best way to do this while also preserving pointer semantics
 def genIndex(x, y):
     if type(y) == Const:
         offset = (y.val - x.tp.lower) * x.tp.base.size
@@ -436,7 +447,6 @@ def genAssign(x, y):
         putLab(lab)
     elif type(y) != Reg: y = loadItem(y); r = y.reg
     else: r = y.reg
-    varUsed(str(x.adr))
     putMemOp('sw', r, x.reg, x.adr); releaseReg(r)
 
 
@@ -476,16 +486,14 @@ def genLocalVars(sc, start):
                                      # compute the real address at the end
             name = str(sc[i].adr)
             declarations[curlev].append( (name, sc[i].tp.size) )
-            usedVars[curlev][name] = False
     return s
 
-# Procedure `genProcStart()` adds a new scope to the declarations, instructions,
-# and usedVars global variables
+# Procedure `genProcStart()` adds a new scope to the declarations, instructions global variables
 def genProcStart():
-    global curlev, declarations, instructions, usedVars
+    global curlev, declarations, instructions
     declarations.append( [] )
     instructions.append( [] )
-    usedVars.append( {} )
+    fieldVars.append( {} )
     curlev = curlev + 1
 
 
@@ -514,7 +522,7 @@ def genProcEntry(ident, parsize, localsize):
     procNames.append(ident)
 
 def genProcExit(x, parsize, localsize):
-    global curlev, declarations, instructions, usedVars, compiledProcedures
+    global curlev, declarations, instructions, compiledProcedures
     
     putOp('add', SP, FP, parsize) # restore stack pointer
     putMemOp('lw', LNK, FP, - 8)  # pop return address
@@ -522,14 +530,14 @@ def genProcExit(x, parsize, localsize):
     putInstr('jr $ra')            # return
     
     # apply optimizations
-    realAddresses,localsize = removeUnusedProcVariables()
-    processProcInstructions(realAddresses, str(localsize))
+    realAddresses,localsize = removeUnusedVariables(genProcDecl)
+    processProcInstructions(realAddresses, localsize)
 
-    # remove declarations, instructions, usedVars for the procedure we're exiting
+    # remove declarations, instructions for the procedure we're exiting
     procDecl = declarations.pop()
     procIns = instructions.pop()
-    procUsedVars = usedVars.pop()
     procNames.pop()
+    fieldVars.pop()
     curlev = curlev - 1
     # store the compiled instructions in compiledProcedures
     compiledProcedures.append(procIns)
