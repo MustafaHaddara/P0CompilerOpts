@@ -155,37 +155,19 @@ def genProgExit(x):
     combineInstructions()
     return '\n'.join(assembly(l, i, t) for (l, i, t) in instructions[-1])
 
-def runOptimizations():
-    removeUnusedVariables(genDataDecl)
-
 def combineInstructions():
-    prelude =   [instructions[curlev][0]] + declarations[curlev] + [('', '.text', '')]
+    prelude = [instructions[curlev][0]] + declarations[curlev] + [('', '.text', '')]
     for proc in compiledProcedures:
         prelude += proc
     prelude += instructions[curlev][1:]
     instructions[curlev] = prelude
 
-def processProcInstructions(realAddrs, size):
-    global instructions, procNames
-    currentInstructions = instructions[curlev]
-    procName = '__LOCAL_' + procNames[-1]
-    localsize = str(size + 8)
-    for i in range(len(currentInstructions)):
-        (l,ins,target) = currentInstructions[i]
-        if procName in ins:
-            ins = ins.replace(procName, localsize)
-        for varAddr in realAddrs:
-            if type(varAddr) != str:
-                continue
-            varSize = str(realAddrs[varAddr])            
-            if varAddr in ins:
-                ins = ins.replace(varAddr, varSize)
-            if type(target) == str and varAddr in target:
-                target = target.replace(varAddr, varSize)
-        currentInstructions[i] = (l, ins, target)
-    instructions[curlev] = currentInstructions
+# BEGIN OPTIMIZATIONS
+def runOptimizations():
+    removeUnusedVariables(genDataDecl)
+    deadStoreElimination()
 
- 
+# REMOVE UNUSED VARIABLES
 def removeUnusedVariables(f):
     global declarations, instructions
     currentInstructions = instructions[curlev]
@@ -212,6 +194,59 @@ def genDataDecl(decl):
 
 def genProcDecl(decl):
     return decl
+
+def processProcInstructions(realAddrs, size):
+    global instructions, procNames
+    currentInstructions = instructions[curlev]
+    procName = '__LOCAL_' + procNames[-1]
+    localsize = str(size + 8)
+    for i in range(len(currentInstructions)):
+        (l,ins,target) = currentInstructions[i]
+        if procName in ins:
+            ins = ins.replace(procName, localsize)
+        for varAddr in realAddrs:
+            if type(varAddr) != str:
+                continue
+            varSize = str(realAddrs[varAddr])            
+            if varAddr in ins:
+                ins = ins.replace(varAddr, varSize)
+            if type(target) == str and varAddr in target:
+                target = target.replace(varAddr, varSize)
+        currentInstructions[i] = (l, ins, target)
+    instructions[curlev] = currentInstructions
+
+# DEAD STORE ELIMINATION
+def deadStoreElimination():
+    instructions[curlev] = deadStoreEliminationFromBlock(instructions[curlev])
+    newCompiledProcedures = []
+    for compiledProc in compiledProcedures:
+        newCompiledProcedures.append(deadStoreEliminationFromBlock(compiledProc))
+
+# Dead store elimination looks for `sw` instructions not followed
+# by a `lw` instruction from the same reg
+def deadStoreEliminationFromBlock(block):
+    readAddresses = {}
+    result = []
+    for elem in block[::-1]:
+        (_,ins,_) = elem
+        # assuming all targets for branch/jump instructions are labels
+        if ins.startswith('lw'):
+            # this is a read
+            t,reg,loc = ins.split()
+            readAddresses[loc] = True
+            result.append(elem)
+        elif ins.startswith('sw'):
+            # this is a write
+            t,reg,loc = ins.split()
+            # if we're writing here and we've read from it before, keep the instruction
+            # otherwise we discard it
+            if loc in readAddresses and readAddresses[loc]:
+                result.append(elem)
+                readAddresses[loc] = False
+        else:
+            result.append(elem)
+    return result[::-1]
+
 
 # Procedure `newLabel()` generates a new unique label on each call.
 def newLabel():
