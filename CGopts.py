@@ -164,8 +164,8 @@ def combineInstructions():
 
 # BEGIN OPTIMIZATIONS
 def runOptimizations():
-    removeUnusedVariables(genDataDecl)
     deadStoreElimination()
+    removeUnusedVariables(genDataDecl)
 
 # REMOVE UNUSED VARIABLES
 def removeUnusedVariables(f):
