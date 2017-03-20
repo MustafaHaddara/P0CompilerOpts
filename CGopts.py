@@ -164,8 +164,34 @@ def combineInstructions():
 
 # BEGIN OPTIMIZATIONS
 def runOptimizations():
+    removeUnusedProcedures()
     deadStoreElimination()
     removeUnusedVariables(genDataDecl)
+
+# Searches for 'jal' in main, indicating a procedure is being used in the main loop
+def removeUnusedProcedures():
+    global instructions, compiledProcedures
+    currentInstructions = instructions[curlev]
+    procedureNames = []
+    temp = []
+    for i in range(len(currentInstructions)):
+        (l,ins,target) = currentInstructions[i]   
+        if (ins == 'jal'):
+            recursiveProcedureSearch(procedureNames, temp, target)
+    compiledProcedures = temp
+
+# Recursive search for 'jal' in current procedure, indicating a procedure is being used within another procedure, which then searches 
+def recursiveProcedureSearch(procedureNames, temp, target):
+    for procedure in range(len(compiledProcedures)):
+        searchCurrentProcedure = False
+        for line in range(len(compiledProcedures[procedure])):
+            if (line == 2 and compiledProcedures[procedure][line][0] == target):
+                if compiledProcedures[procedure][line][0] not in procedureNames:
+                    procedureNames.append(compiledProcedures[procedure][line][0])
+                    temp.append(compiledProcedures[procedure])
+                    searchCurrentProcedure = True
+            if (searchCurrentProcedure and compiledProcedures[procedure][line][1] == 'jal'):
+                recursiveProcedureSearch(procedureNames, temp, compiledProcedures[procedure][line][2])
 
 # REMOVE UNUSED VARIABLES
 def removeUnusedVariables(f):
