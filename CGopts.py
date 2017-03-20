@@ -273,6 +273,77 @@ def deadStoreEliminationFromBlock(block):
             result.append(elem)
     return result[::-1]
 
+'''
+Common subexpression elimination:
+The basic logic for this area is as follows:
+
+Create a list of expressions, initially empty.
+Go through the current block and record every instruction, the format is:
+
+subexpressions = [[Instruction, [lines]], [Instruction2, [lines]], [Instruction3, [lines]], ...]
+
+(this will eventually only grab relevant ones, lw, addi, and such)
+
+This only records if there is no duplicate line, if there is the line is instead appended to the relevant lines list in the set.
+
+At the same time, each used register used is recorded in a different list in a similar format.
+
+used_registers = [[Register, [lines]], [Register2, [lines]], [Register3, [lines]], ...]
+
+Quickly check that there is at least 1 entry in subexpressions with more than 1 entry in [lines], otherwise there are no
+common subexpressions and the optimization is redundant.  Any subexpression with a len([lines]) = 1 is removed from the list.
+
+Not relevant for this particular compiler, but an important note:
+Go through the block and check for any instances of data being stored to memory then it being loaded, this is an indication
+that there are not enough registers for the function of this block, and common subexpression elimination will not assist as it
+performs best when replacing them with register stored values, not from memory.  In fact, doing so can slow the program down in
+some cases.  If this occurs, the optimization does not continue.
+
+The list of registers is crucial as it will determine what registers are free to use, what registers can be used at some points
+and not others, and others still that are used throughout and cannot be modified.  Since this all occurs after smart registry
+use optimization, we can assume that the range of lines between occurances are considered "blocked" for use.  Effectively, this
+means that the first and last occurance is blocked off and we cannot use that register for any other purpose during those lines.
+But before and after the blocked section is fair game.
+
+This list of subexpressions is then sorted based on the len of the [lines] list for each instruction, with priority being given
+to those with the most (i.e. the most common subexpressions).  This ordering is important as it ensures that the best optimizations
+are taken in case of there being more CSEs than usable registers.
+
+Now for each CSE:
+    Now we must check if the CSE is actually valid, and that no changes to the used variables occured.  For instance:
+
+    a = x + y
+    b = x + y
+
+    x + y is a valid CSE.
+
+    a = x + y + i
+    b = x + y + j
+
+    x + y is also a valid CSE.  However, instances can occur where:
+
+    a = x + y + i
+    ...
+    x = x + 6
+    y = 20 + var
+    ...
+
+    b = x + y + j
+
+    x + y is NOT a valid CSE, as the value of x and y has changed.
+
+    This is important to
+
+
+    The line number range from the first and last occurance is determined, this is used to determine what register should be used.
+    priority is given to those with the "best fit", the registers that are free for the shortest period before and after
+    (but still free throughout) this range. This allows for other CSEs to potentially use registers that we otherwise
+    may have blocked off.  If no used registers exist that are free, an usused register is used if it exists.  If none do, the
+    CSE is skipped and the next CSE proceeds.
+'''
+#Reuse registers if possible, count from bottom!
+#(label, instruction, target)
+
 
 # Procedure `newLabel()` generates a new unique label on each call.
 def newLabel():
