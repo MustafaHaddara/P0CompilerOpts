@@ -243,10 +243,12 @@ def processProcInstructions(realAddrs, size):
 
 # DEAD STORE ELIMINATION
 def deadStoreElimination():
+    global compiledProcedures
     instructions[curlev] = deadStoreEliminationFromBlock(instructions[curlev])
     newCompiledProcedures = []
     for compiledProc in compiledProcedures:
         newCompiledProcedures.append(deadStoreEliminationFromBlock(compiledProc))
+    compiledProcedures = newCompiledProcedures
 
 # Dead store elimination looks for `sw` instructions not followed
 # by a `lw` instruction from the same reg
