@@ -394,7 +394,6 @@ class Cond:
 # Procedure `loadItemReg(x, r)` generates code for loading item `x` to register 
 # `r`, assuming `x` is `Var`, `Const`, or `Reg`. If a constant is too large to 
 # fit in 16 bits immediate addressing, an error message is generated.
-# If we're loading a variable, mark it as being used
 def testRange(x):
     if x.val >= 0x8000 or x.val < -0x8000: mark('value too large')
 

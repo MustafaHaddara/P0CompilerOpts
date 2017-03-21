@@ -15,23 +15,23 @@ compileString("""program p;
       type T = record d,e,f:integer end;
       type A = array[0..9] of integer;
       var c: integer;
-      var b: integer;
+      var b: boolean;
       var w: A;
-        procedure q(var z: boolean);
+      procedure q(var z: integer);
             type T = record d,e:integer end;
             type A = array[0..9] of integer;
             var y: integer;
             var m,n: boolean;
             var w: T;
-            var wd, we: integer
+            var wd, we: integer;
 
-            begin w.d := 9; w.e := 5; w.d := 3 - 1; z := true end;
+            begin b:=true; w.d := 9; w.e := 5; w.d := 3 - 1 end;
       begin 
-      {w.d := 9; w.e := 5; w.d := 3 - 1;}
       w[1] := 9; w[2] := 5;
         c := 10;
         c := c + 1;
-        write(c)
+        write(c);
+        q(c)
       end
     """, target=target)
 
