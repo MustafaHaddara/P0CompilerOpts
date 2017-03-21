@@ -46,13 +46,14 @@ from ST import Var, Ref, Const, Type, Proc, StdProc, Int, Bool
 # Procedure `genProgStart()` initializes these variables. Registers `$t0` to 
 # `$t9` are used as general-purpose registers.
 def genProgStart():
-    global declarations, instructions, compiledProcedures, procNames, fieldVars
+    global declarations, instructions, compiledProcedures, procNames, fieldVars, usedGlobalVars
     global curlev, label, vname, regs, writtenText
     declarations = [ [] ]
     instructions = [ [] ]
     compiledProcedures = []
     procNames = []
     fieldVars = [ {} ]
+    usedGlobalVars  = {}
     curlev = 0
     label = 0
     vname = 0
@@ -131,6 +132,7 @@ def genGlobalVars(sc, start):
         if type(sc[i]) == Var:
             sc[i].adr = sc[i].name + '_'
             declarations[curlev].append( (sc[i].adr, sc[i].tp.size) )
+            usedGlobalVars[sc[i].adr] = False
 
 # Procedure `genProgEntry(ident)` takes the program's name as a parameter. 
 # Directives for marking the beginning of the main program are generated; the 
@@ -165,7 +167,7 @@ def combineInstructions():
 # BEGIN OPTIMIZATIONS
 def runOptimizations():
     removeUnusedProcedures()
-    deadStoreElimination()
+    # deadStoreElimination()
     removeUnusedVariables(genDataDecl)
 
 # Searches for 'jal' in main, indicating a procedure is being used in the main loop
@@ -195,7 +197,7 @@ def recursiveProcedureSearch(procedureNames, temp, target):
 
 # REMOVE UNUSED VARIABLES
 def removeUnusedVariables(f):
-    global declarations, instructions
+    global declarations, usedGlobalVars
     currentInstructions = instructions[curlev]
     temp = []
     completed = []
@@ -207,11 +209,14 @@ def removeUnusedVariables(f):
             name = decl[0]
             size = decl[1]
             if name in completed: continue
-            if name in ins or (type(target) == str and name in target):
+            if name in usedGlobalVars or name in ins or (type(target) == str and name in target):
                 completed.append(name)
                 s = s + size
                 realAddrs[name] = -s - 8
-                temp.append( f(decl) )
+                if name not in usedGlobalVars:
+                    temp.append( f(decl) )
+                elif not usedGlobalVars[name]:
+                    usedGlobalVars[name] = True
     declarations[curlev] = temp
     return realAddrs,s
 
